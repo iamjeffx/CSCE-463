@@ -10,6 +10,7 @@
 #include "pch.h"
 #include "URLParser.h"
 #include "Socket.h"
+#include "HTMLParserBase.h"
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
@@ -49,7 +50,38 @@ int main(int argc, char* argv[]) {
             string res = string(s.getBuf());
             s.close();
 
-            cout << res << endl;
+            // Extract the header from the response
+            int headerIndex = res.find("\r\n\r\n");
+            string header = res.substr(0, headerIndex);
+
+            // Extract status code
+            int statusCode = atoi(header.substr(9, 3).c_str());
+
+            printf("\tVerifying header... ");
+
+            if (statusCode <= 99) {
+                printf("failed with non-HTTP header");
+                return 0;
+            }
+
+            printf("status code %d\n", statusCode);
+
+            if (!(statusCode < 200 || statusCode >= 300)) {
+                // Parse the HTML page
+                int numLinks;
+                HTMLParserBase HTMLParser;
+
+                printf("\t\b\b+ Parsing page... ");
+
+                clock_t timer = clock();
+                char* buffer = HTMLParser.Parse((char*)res.c_str(), (int)strlen(res.c_str()), (char*)parser.getURL().c_str(), (int)strlen(parser.getURL().c_str()), &numLinks);
+                double timeElapsed = (clock() - timer) / (double)CLOCKS_PER_SEC;
+
+                printf("done in %.1f ms with %d links\n", timeElapsed * 1000, numLinks);
+                
+            }
+            printf("----------------------------------------\n");
+            printf("%s\n", header.c_str());
         }
     }
 
