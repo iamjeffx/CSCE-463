@@ -2,6 +2,8 @@
 
 #include "pch.h"
 
+using namespace std;
+
 class Socket
 {
 private:
@@ -13,7 +15,11 @@ private:
 public:
 	Socket();
 	~Socket();
-	bool Read();
-
+	bool Read(void);
+	bool Send(string request, string host, int port);
+	void close();
+	char* getBuf() {
+		return this->buf;
+	}
 };
 

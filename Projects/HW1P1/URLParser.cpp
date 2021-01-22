@@ -81,3 +81,9 @@ int URLParser::parse() {
 string URLParser::generateQuery() {
 	return this->path + this->query;
 }
+
+string URLParser::generateRequest(string requestType) {
+	string request = requestType + " " + generateQuery() + " HTTP/1.0\r\nUser-agent: JXCrawler/1.1\r\n";
+	request += "Host: " + getHost() + "\r\nConnection: close\r\n\r\n";
+	return request;
+}

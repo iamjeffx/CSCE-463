@@ -19,6 +19,7 @@ public:
 	void reset();
 	int parse();
 	string generateQuery();
+	string generateRequest(string requestType);
 	string getHost() {
 		return this->host;
 	}
