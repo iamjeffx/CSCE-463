@@ -1,3 +1,14 @@
+/** CSCE 463 Homework 1 Part 1
+*
+    Author: Jeffrey Xu
+    UIN: 527008162
+    Email: jeffreyxu@tamu.edu
+    Professor Dmitri Loguinov
+    Filename: Socket.cpp
+
+    Definition of all Socket functions. 
+**/
+
 #include "Socket.h"
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
@@ -28,7 +39,9 @@ Socket::Socket() {
     }   
 }
 
-Socket::~Socket() {}
+Socket::~Socket() {
+    delete buf;
+}
 
 void Socket::close() {
     // Close the socket
@@ -45,6 +58,8 @@ bool Socket::Send(string request, string host, int port) {
 
     printf("\tDoing DNS... ");
     DWORD IP = inet_addr(host.c_str());
+
+    // If host isn't an IP address
     if (IP == INADDR_NONE) {
         if ((remote = gethostbyname(host.c_str())) == NULL) {
             printf("failed with %d\n", WSAGetLastError());
@@ -54,11 +69,12 @@ bool Socket::Send(string request, string host, int port) {
             memcpy((char*)&(server.sin_addr), remote->h_addr, remote->h_length);
         }
     }
+    // Host is a proper IP
     else {
         server.sin_addr.S_un.S_addr = IP;
     }
 
-    double timeElapsed = (double)(clock() - timer) / (double)CLOCKS_PER_SEC;
+    double timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
     printf("done in %.1f ms, found %s\n", timeElapsed * 1000, inet_ntoa(server.sin_addr));
 
     // Set up port number and TCP and connect to port
@@ -73,7 +89,7 @@ bool Socket::Send(string request, string host, int port) {
         printf("failed with %d\n", WSAGetLastError());
         return false;
     }
-    timeElapsed = (double)(clock() - timer) / (double)CLOCKS_PER_SEC;
+    timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
     printf("done in %.1f ms\n", timeElapsed * 1000);
 
     // Send message to specified port
@@ -109,14 +125,14 @@ bool Socket::Read(void) {
 
             // Error with recv function
             if (bytes < 0) {
-                printf("%d\n", WSAGetLastError());
+                printf("failed with %d in recv\n", WSAGetLastError());
                 break;
             }
 
             // Null-terminated response: Close the buffer and break
             if (bytes == 0) {
                 buf[curPos + 1] = '\0';
-                timeElapsed = (clock() - timer) / (double)CLOCKS_PER_SEC;
+                timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
                 printf("done in %.1f ms with %d bytes\n", timeElapsed * 1000, curPos);
                 return true;
             }
@@ -131,10 +147,12 @@ bool Socket::Read(void) {
                 buf = temp;
             }
         }
+        // Timeout expired for connection
         else if (ret == 0) {
             printf("Connection timed out\n");
             break;
         }
+        // Some connection error occurred
         else {
             printf("Connection error: %d", WSAGetLastError());
             break;
