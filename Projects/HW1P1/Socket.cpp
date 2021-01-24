@@ -20,7 +20,7 @@ Socket::Socket() {
     allocatedSize = INITIAL_BUF_SIZE;
     curPos = 0;
 
-    // Initialize WinSock
+    // Initialize WinSock (from sample solution code)
     WSADATA wsaData;
 
     WORD wVersionRequested = MAKEWORD(2, 2);
@@ -40,6 +40,7 @@ Socket::Socket() {
 }
 
 Socket::~Socket() {
+    // Clear the buffer
     delete buf;
 }
 
@@ -52,19 +53,20 @@ bool Socket::Send(string request, string host, int port) {
     struct hostent* remote;
     struct sockaddr_in server;
 
-    // Perform DNS lookup and time the operation
-    clock_t timer;
-    timer = clock();
+    // Perform DNS lookup and time the operation (code is from sample solution)
+    clock_t timer = clock();
 
     printf("\tDoing DNS... ");
     DWORD IP = inet_addr(host.c_str());
 
     // If host isn't an IP address
     if (IP == INADDR_NONE) {
+        // Perform DNS lookup on hostname
         if ((remote = gethostbyname(host.c_str())) == NULL) {
             printf("failed with %d\n", WSAGetLastError());
             return false;
         }
+        // Successful DNS lookup
         else {
             memcpy((char*)&(server.sin_addr), remote->h_addr, remote->h_length);
         }
@@ -78,23 +80,24 @@ bool Socket::Send(string request, string host, int port) {
     printf("done in %.1f ms, found %s\n", timeElapsed * 1000, inet_ntoa(server.sin_addr));
 
     // Set up port number and TCP and connect to port
-    timer = clock();
-
     server.sin_family = AF_INET;
     server.sin_port = htons(port);
 
     printf("\t\b\b* Connecting on page... ");
 
+    timer = clock();
+
+    // Attempt connection to host and port
     if (connect(sock, (struct sockaddr*)&server, sizeof(struct sockaddr_in)) == SOCKET_ERROR) {
         printf("failed with %d\n", WSAGetLastError());
         return false;
     }
+
     timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
     printf("done in %.1f ms\n", timeElapsed * 1000);
 
     // Send message to specified port
     // The format of this code was taken from the following Stackoverflow post: https://stackoverflow.com/questions/1011339/how-do-you-make-a-http-request-with-c
-    printf("\tLoading... ");
     if (send(this->sock, request.c_str(), strlen(request.c_str()) + 1, 0) == SOCKET_ERROR) {
         printf("failed with %d\n", WSAGetLastError());
         return false;
@@ -103,6 +106,8 @@ bool Socket::Send(string request, string host, int port) {
 }
 
 bool Socket::Read(void) {
+    printf("\tLoading... ");
+
     // Set timeout value to 10s
     timeval timeout;
     timeout.tv_sec = 10;
@@ -111,7 +116,6 @@ bool Socket::Read(void) {
     curPos = 0;
     fd_set fdRead;
     int ret;
-    double timeElapsed;
 
     clock_t timer = clock();
 
@@ -120,7 +124,8 @@ bool Socket::Read(void) {
         FD_ZERO(&fdRead);
         FD_SET(sock, &fdRead);
 
-        if ((ret = select(0, &fdRead, 0, 0, &timeout)) > 0) {
+        if ((ret = select(0, &fdRead, NULL, NULL, &timeout)) > 0) {
+            // Receive new data
             int bytes = recv(sock, buf + curPos, allocatedSize - curPos, 0);
 
             // Error with recv function
@@ -132,10 +137,11 @@ bool Socket::Read(void) {
             // Null-terminated response: Close the buffer and break
             if (bytes == 0) {
                 buf[curPos + 1] = '\0';
-                timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
+                double timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
                 printf("done in %.1f ms with %d bytes\n", timeElapsed * 1000, curPos);
                 return true;
             }
+            // Update cursor
             curPos += bytes;
 
             // Buffer is running out of space: resize is required

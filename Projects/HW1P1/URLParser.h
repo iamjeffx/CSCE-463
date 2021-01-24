@@ -27,7 +27,7 @@ public:
 	URLParser(std::string url);
 	~URLParser();
 
-	void reset();
+	void reset(string URL);
 	int parse();
 	string generateQuery();
 	string generateRequest(string requestType);
@@ -45,6 +45,21 @@ public:
 	}
 	string getURL() {
 		return this->url;
+	}
+	void setHost(string host) {
+		this->host = host;
+	}
+	void setPath(string path) {
+		this->path = path;
+	}
+	void setPort(int port) {
+		this->port = port;
+	}
+	void setQuery(string query) {
+		this->query = query;
+	}
+	void setURL(string URL) {
+		this->url = URL;
 	}
 	string toString() {
 		return "URL: " + url + "\nHOST: " + host + "\nPATH: " + path + "\nPORT: " + to_string(port) + "\nQUERY: " + query;
