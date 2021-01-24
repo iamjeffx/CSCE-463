@@ -25,17 +25,20 @@ int main(int argc, char* argv[]) {
     }
 
     // Extract URL
-    string URL = argv[1];
+    string URL = string(argv[1]);
     printf("URL: %s\n", URL.c_str());
 
     // Begin parsing URL
     printf("\tParsing URL... ");
     URLParser parser(URL);
     int parseResult = parser.parse();
+
+    // Not HTTP scheme
     if (parseResult == -1) {
         printf("failed with invalid scheme");
         return 0;
     }
+    // Invalid port 
     if (parseResult == -2) {
         printf("failed with invalid port");
         return 0;
@@ -49,8 +52,8 @@ int main(int argc, char* argv[]) {
     if (s.Send(parser.generateRequest("GET"), parser.getHost(), parser.getPort())) {
         if (s.Read()) {
             // Extract response and close the socket
-            string res = string(s.getBuf());
             s.close();
+            string res = string(s.getBuf());
 
             // Extract the header from the response
             int headerIndex = res.find("\r\n\r\n");
@@ -61,6 +64,7 @@ int main(int argc, char* argv[]) {
 
             printf("\tVerifying header... ");
 
+            // Not an HTTP response
             if (statusCode <= 99) {
                 printf("failed with non-HTTP header");
                 return 0;
@@ -68,6 +72,7 @@ int main(int argc, char* argv[]) {
 
             printf("status code %d\n", statusCode);
 
+            // Only parse the HTML if a 2XX status code is present
             if (!(statusCode < 200 || statusCode >= 300)) {
                 // Parse the HTML page
                 int numLinks;
@@ -80,7 +85,6 @@ int main(int argc, char* argv[]) {
                 double timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
 
                 printf("done in %.1f ms with %d links\n", timeElapsed * 1000, numLinks);
-                
             }
 
             // Output HTTP response header
@@ -90,4 +94,5 @@ int main(int argc, char* argv[]) {
     }
     // Clean up all socket information
     WSACleanup();
+    return 0;
 }

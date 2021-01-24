@@ -15,30 +15,28 @@
 using namespace std;
 
 URLParser::URLParser(std::string url) {
-	this->url = url;
-	this->host = "";
-	this->path = "";
-	this->port = 0;
-	this->query = "";
+	// Set values to default values (except for URL)
+	reset(url);
 };
 
 URLParser::~URLParser() {
-	reset();
+	// Clear all fields to default values
+	reset("");
 };
 
-void URLParser::reset() {
-	this->url = "";
+void URLParser::reset(string URL) {
+	this->url = URL;
 	this->host = "";
-	this->path = "";
-	this->port = 0;
+	this->path = "/";
+	this->port = 80;
 	this->query = "";
 };
 
 int URLParser::parse() {
 	string URL = this->url;
-	// Check that the HTTP protocol is being used
+	// Check that the HTTP protocol is being used (HTTPS not considered at this stage)
 	if (URL.substr(0, 7) != "http://") {
-		reset();
+		reset("");
 		return -1;
 	}
 
@@ -49,55 +47,51 @@ int URLParser::parse() {
 
 	// Extract query
 	int queryIndex = (int)URL.find_first_of("?");
-	if (queryIndex == -1) {
-		this->query = "";
-	}
-	else {
-		this->query = URL.substr(queryIndex, (int)URL.size());
+	if (queryIndex != -1) {
+		setQuery(URL.substr(queryIndex, (int)URL.size()));
 		URL = URL.substr(0, queryIndex);
 	}
 
 	// Extract path
 	int pathIndex = (int)URL.find_first_of("/");
-	if (pathIndex == -1) {
-		this->path = "/";
-	}
-	else {
-		this->path = URL.substr(pathIndex, (int)URL.size());
+	if (pathIndex != -1) {
+		setPath(URL.substr(pathIndex, (int)URL.size()));
 		URL = URL.substr(0, pathIndex);
 	}
 
 	// Extract host and port number
 	int portIndex = (int)URL.find_first_of(":");
 	if (portIndex == -1) {
-		this->port = 80;
-		this->host = URL;
+		setHost(URL);
 	}
 	else {
 		// No port specified
 		if (portIndex == URL.size() - 1) {
-			reset();
+			reset("");
 			return -2;
 		}
 
+		// Initialize port number
 		this->port = atoi(URL.substr(portIndex + 1, (int)URL.size()).c_str());
 
-		// Invalid port number provided 
+		// Invalid port number provided (handles case if port number is negative or isn't numeric)
 		if (port <= 0) {
-			reset();
+			reset("");
 			return -2;
 		}
-		this->host = URL.substr(0, portIndex);
+		setHost(URL.substr(0, portIndex));
 	}
 	// URL successfully parsed
 	return 0;
 };
 
 string URLParser::generateQuery() {
-	return this->path + this->query;
+	// Concatenates path and query to generate the entire query
+	return getPath() + getQuery();
 }
 
 string URLParser::generateRequest(string requestType) {
+	// Generates entire HTTP request
 	string request = requestType + " " + generateQuery() + " HTTP/1.0\r\nUser-agent: JXCrawler/1.1\r\n";
 	request += "Host: " + getHost() + "\r\nConnection: close\r\n\r\n";
 	return request;
