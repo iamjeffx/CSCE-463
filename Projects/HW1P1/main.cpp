@@ -1,8 +1,10 @@
 /** CSCE 463 Homework 1 Part 1
 *
     Author: Jeffrey Xu
+    UIN: 527008162
     Email: jeffreyxu@tamu.edu
-    Professor Loguinov
+    Professor Dmitri Loguinov
+    Filename: main.cpp
 
     Basic Web-crawler that uses TCP/IP and WinSock.
 **/
@@ -31,11 +33,11 @@ int main(int argc, char* argv[]) {
     URLParser parser(URL);
     int parseResult = parser.parse();
     if (parseResult == -1) {
-        printf("Failed with invalid scheme");
+        printf("failed with invalid scheme");
         return 0;
     }
     if (parseResult == -2) {
-        printf("Failed with invalid port");
+        printf("failed with invalid port");
         return 0;
     }
     printf("host %s, port %d, request %s\n", parser.getHost().c_str(), parser.getPort(), parser.generateQuery().c_str());
@@ -75,15 +77,17 @@ int main(int argc, char* argv[]) {
 
                 clock_t timer = clock();
                 char* buffer = HTMLParser.Parse((char*)res.c_str(), (int)strlen(res.c_str()), (char*)parser.getURL().c_str(), (int)strlen(parser.getURL().c_str()), &numLinks);
-                double timeElapsed = (clock() - timer) / (double)CLOCKS_PER_SEC;
+                double timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
 
                 printf("done in %.1f ms with %d links\n", timeElapsed * 1000, numLinks);
                 
             }
+
+            // Output HTTP response header
             printf("----------------------------------------\n");
             printf("%s\n", header.c_str());
         }
     }
-
+    // Clean up all socket information
     WSACleanup();
 }

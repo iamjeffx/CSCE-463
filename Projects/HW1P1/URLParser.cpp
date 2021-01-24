@@ -1,3 +1,14 @@
+/** CSCE 463 Homework 1 Part 1
+*
+	Author: Jeffrey Xu
+	UIN: 527008162
+	Email: jeffreyxu@tamu.edu
+	Professor Dmitri Loguinov
+	Filename: URLParser.cpp
+
+	Definition of URLParser functions. Note that fragments are not included in this parser. 
+**/
+
 #include "pch.h"
 #include "URLParser.h"
 
@@ -63,18 +74,22 @@ int URLParser::parse() {
 		this->host = URL;
 	}
 	else {
+		// No port specified
 		if (portIndex == URL.size() - 1) {
 			reset();
 			return -2;
 		}
+
 		this->port = atoi(URL.substr(portIndex + 1, (int)URL.size()).c_str());
+
+		// Invalid port number provided 
 		if (port <= 0) {
 			reset();
 			return -2;
 		}
 		this->host = URL.substr(0, portIndex);
 	}
-
+	// URL successfully parsed
 	return 0;
 };
 
