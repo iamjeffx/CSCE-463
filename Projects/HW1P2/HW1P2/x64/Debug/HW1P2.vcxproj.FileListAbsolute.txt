@@ -1,0 +1,2 @@
+C:\Users\jeffr\CSCE 463\Projects\HW1P2\HW1P2\x64\Debug\HW1P2.exe
+C:\Users\jeffr\CSCE 463\Projects\HW1P2\HW1P2\x64\Debug\HW1P2.pdb
