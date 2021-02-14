@@ -38,6 +38,7 @@ struct Parameters {
     volatile int num3XX = 0;
     volatile int num4XX = 0;
     volatile int num5XX = 0;
+    volatile int numXXX = 0;
 
     float totalElapsedTime;
     volatile int numTAMUInternal = 0;
@@ -55,12 +56,52 @@ struct Parameters {
     HANDLE statQuit;
 };
 
+bool isTAMUURL(URLParser& URL) {
+    if (URL.getHost().find("tamu.edu") != -1 && URL.getURL().find("tamu.edu/") != -1) {
+        return true;
+    }
+    return false;
+}
+
+void parsePageLinks(HTMLParserBase* HTMLParser, Parameters* p, string page, URLParser URL) {
+    int numLinks;
+    bool containsTAMULink = false;
+    char* linkBuf = HTMLParser->Parse((char*)page.c_str(), (int)strlen(page.c_str()), (char*)URL.getURL().c_str(), (int)strlen(URL.getURL().c_str()), &numLinks);
+
+    string link;
+
+    for (int i = 0; i < numLinks; i++) {
+        link = string(linkBuf);
+        URLParser tamuURL(link);
+
+        if (isTAMUURL(tamuURL)) {
+            containsTAMULink = true;
+            break;
+        }
+        linkBuf += strlen(linkBuf) + 1;
+    }
+
+    WaitForSingleObject(p->paramMutex, INFINITE);
+    if (containsTAMULink) {
+        if (isTAMUURL(URL)) {
+            p->numTAMUInternal++;
+        }
+        else {
+            p->numTAMUExternal++;
+        }
+    }
+    p->numTotalLinks += numLinks;
+    ReleaseMutex(p->paramMutex);
+}
+
 int parseStatus(string response) {
-    printf("\tVerifying header... ");
+    if (response.size() <= 14) {
+        return -1;
+    }
+
     int status = atoi(response.substr(9, 3).c_str());
 
-    if (status <= 99) {
-        printf("failed with non-HTTP header\n");
+    if (status <= 99 || status > 505) {
         return -1;
     }
 
@@ -327,9 +368,13 @@ UINT statThread(LPVOID params) {
     int numPages = 0;
     bool last = false;
 
-    while (WaitForSingleObject(p->statQuit, 2000) == WAIT_TIMEOUT) {
+    while (true) {
+        // Update pages and downloaded bytes for next interval
         numBytes = p->numBytesDownloaded;
         numPages = p->numPagesDownloaded;
+
+        // Update every 2 seconds
+        Sleep(2000);
 
         // Output stats for current interval
         printf("[%3d] %4d Q %6d E %7d H %6d D %6d I %5d R %5d C %5d L %4dK\n",
@@ -338,11 +383,11 @@ UINT statThread(LPVOID params) {
             p->numDNSSuccess, p->numIPUniqueness, p->numRobotsSuccess, p->numCrawledURLs, p->numTotalLinks / 1000);
 
         // Compute number of bytes downloaded during this interval (2s)
-        double bytesDownloaded = (p->numBytesDownloaded - numBytes) / 2;
+        double bytesDownloaded = ((double)p->numBytesDownloaded - (double)numBytes) / (double)2;
         double pagesDownloaded = (double)((double)p->numPagesDownloaded - (double)numPages) / 2.0;
 
         // Output crawling information
-        printf("\t*** crawling %.1f pps @ %.1f Mbps\n", pagesDownloaded, bytesDownloaded / double(125000));
+        printf("\t*** crawling %.1f pps @ %.1f Mbps\n", (double)pagesDownloaded, bytesDownloaded / double(125000));
 
         // Break condition
         if (p->numThreadsRunning == 0) {
@@ -354,6 +399,17 @@ UINT statThread(LPVOID params) {
             }
         }
     }
+
+    // Update total time taken
+    double totalTimeElapsed = (double)((double)clock() - startTime) / (double)CLOCKS_PER_SEC;
+
+    // Output final stats
+    printf("\nExtracted %d URLs @ %d/s\n", p->numExtractedURLs, (int)(p->numExtractedURLs / totalTimeElapsed));
+    printf("Looked up %d DNS names @ %d/s\n", p->numDNSSuccess, (int)(p->numDNSSuccess / totalTimeElapsed));
+    printf("Downloaded %d robots @ %d/s\n", p->numRobotsSuccess, (int)(p->numRobotsSuccess / totalTimeElapsed));
+    printf("Crawled %d pages @ %d/s (%.2f MB)\n", p->numCrawledURLs, (int)(p->numCrawledURLs / totalTimeElapsed), (double)(p->numBytesDownloaded / (double)1048576));
+    printf("Parsed %d links @ %d/s\n", p->numTotalLinks, (int)(p->numTotalLinks / totalTimeElapsed));
+    printf("HTTP codes: 2xx = %d, 3xx = %d, 4xx = %d, 5xx = %d, other = %d\n", p->num2XX, p->num3XX, p->num4XX, p->num5XX, p->numXXX);
 
     return 0;
 }
@@ -478,17 +534,103 @@ UINT crawlThread(LPVOID param) {
 
                     WaitForSingleObject(p->paramMutex, INFINITE);
                     p->numBytesDownloaded += strlen(response.c_str());
+                    p->numPagesDownloaded++;
                     ReleaseMutex(p->paramMutex);
 
                     // Close socket
-                    closesocket(s.getSock());
+                    closesocket(s.sock);
 
                     int headerIndex = (int)response.find("\r\n\r\n");
                     string header = response.substr(0, headerIndex);
 
+                    // Extract robots status code
+                    int robotsStatus = parseStatus(header);
+
+                    if (robotsStatus == -1) {
+                        continue;
+                    }
+
+                    // Update status numbers
                     WaitForSingleObject(p->paramMutex, INFINITE);
-                    p->numPagesDownloaded++;
+                    if (robotsStatus >= 200 && robotsStatus < 300) {
+                        p->num2XX++;
+                    }
+                    else if (robotsStatus >= 300 && robotsStatus < 400) {
+                        p->num3XX++;
+                    }
+                    else if (robotsStatus >= 400 && robotsStatus < 500) {
+                        p->num4XX++;
+                    }
+                    else if (robotsStatus >= 500 && robotsStatus < 600) {
+                        p->num5XX++;
+                    }
+                    else {
+                        p->numXXX++;
+                    }
                     ReleaseMutex(p->paramMutex);
+
+                    // Free to crawl page
+                    if (robotsStatus >= 400 && robotsStatus < 500) {
+                        s.ReInitSock();
+                        s.setServer(tempServer);
+
+                        // Update number of robots success
+                        WaitForSingleObject(p->paramMutex, INFINITE);
+                        p->numRobotsSuccess++;
+                        ReleaseMutex(p->paramMutex);
+
+                        // Connect to actual page
+                        if (s.Connect(parser.getPort())) {
+                            if (s.Send(parser.generateRequest("GET"))) {
+                                if (s.Read(false)) {
+                                    // Extract HTTP response
+                                    response = s.getBuf();
+                                    
+                                    WaitForSingleObject(p->paramMutex, INFINITE);
+                                    p->numBytesDownloaded += strlen(response.c_str());
+                                    p->numPagesDownloaded++;
+                                    ReleaseMutex(p->paramMutex);
+
+                                    closesocket(s.getSock());
+
+                                    headerIndex = response.find("\r\n\r\n");
+                                    header = response.substr(0, headerIndex);
+
+                                    int statusCode = parseStatus(header);
+
+                                    if (statusCode >= 200 && statusCode < 300) {
+                                        WaitForSingleObject(p->paramMutex, INFINITE);
+                                        p->num2XX++;
+                                        p->numCrawledURLs++;
+                                        ReleaseMutex(p->paramMutex);
+
+                                        // Parse page
+                                        parsePageLinks(HTMLParser, p, response, parser);
+                                    }
+                                    else if (statusCode >= 300 && statusCode < 400) {
+                                        WaitForSingleObject(p->paramMutex, INFINITE);
+                                        p->num3XX++;
+                                        ReleaseMutex(p->paramMutex);
+                                    }
+                                    else if (statusCode >= 400 && statusCode < 500) {
+                                        WaitForSingleObject(p->paramMutex, INFINITE);
+                                        p->num4XX++;
+                                        ReleaseMutex(p->paramMutex);
+                                    }
+                                    else if (statusCode >= 500 && statusCode < 600) {
+                                        WaitForSingleObject(p->paramMutex, INFINITE);
+                                        p->num5XX++;
+                                        ReleaseMutex(p->paramMutex);
+                                    }
+                                    else {
+                                        WaitForSingleObject(p->paramMutex, INFINITE);
+                                        p->numXXX++;
+                                        ReleaseMutex(p->paramMutex);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -569,8 +711,6 @@ int main(int argc, char** argv) {
     SetEvent(params.statQuit);
     WaitForSingleObject(stats, INFINITE);
     CloseHandle(stats);
-
-    printf("Crawling complete\n");
 
     WSACleanup();
 }
