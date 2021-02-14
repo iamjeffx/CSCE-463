@@ -17,7 +17,6 @@ using namespace std;
 class Socket
 {
 private:
-	SOCKET sock;
 	char* buf;
 	size_t allocatedSize;
 	int curPos;
@@ -26,6 +25,8 @@ private:
 	struct sockaddr_in server;
 
 public:
+	SOCKET sock;
+
 	Socket();
 	~Socket();
 	void ReInitSock();
