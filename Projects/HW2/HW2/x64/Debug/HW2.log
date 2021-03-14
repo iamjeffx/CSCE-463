@@ -1,0 +1,6 @@
+﻿  HW2.cpp
+C:\Users\jeffr\CSCE 463\Projects\HW2\HW2\HW2.cpp(94,40): warning C4267: '=': conversion from 'size_t' to 'char', possible loss of data
+C:\Users\jeffr\CSCE 463\Projects\HW2\HW2\HW2.cpp(96,34): warning C4267: '+=': conversion from 'size_t' to 'int', possible loss of data
+C:\Users\jeffr\CSCE 463\Projects\HW2\HW2\HW2.cpp(101,32): warning C4244: '=': conversion from '__int64' to 'int', possible loss of data
+C:\Users\jeffr\CSCE 463\Projects\HW2\HW2\HW2.cpp(254,100): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+  HW2.vcxproj -> C:\Users\jeffr\CSCE 463\Projects\HW2\HW2\x64\Debug\HW2.exe
