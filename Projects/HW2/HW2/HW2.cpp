@@ -148,21 +148,33 @@ char* jump(char* buffer, char* current, char* header, string output, int totalSi
         int offset = (((unsigned char)current[0] & 0x3F) << 8) + (unsigned char)current[1];
 
         if (buffer + offset - header > 0 && buffer + offset - header < sizeof(FixedDNSHeader)) {
+            if (DNSAnswer) {
+                printf("\n");
+            }
             printf("\t++ Invalid record: jump into fixed DNS header\n");
             WSACleanup();
             exit(0);
         }
         else if (current + 1 - buffer >= totalSize) {
+            if (DNSAnswer) {
+                printf("\n");
+            }
             printf("\t++ Invalid record: truncated jump offset\n");
             WSACleanup();
             exit(0);
         }
         else if (offset > totalSize) {
+            if (DNSAnswer) {
+                printf("\n");
+            }
             printf("\t++ Invalid record: jump beyond packet boundary\n");
             WSACleanup();
             exit(0);
         }
         else if (*((unsigned char*)(buffer + offset)) >= 0XC0) {
+            if (DNSAnswer) {
+                printf("\n");
+            }
             printf("\t++ Invalid record: jump loop\n");
             WSACleanup();
             exit(0);
@@ -186,6 +198,10 @@ char* jump(char* buffer, char* current, char* header, string output, int totalSi
 
         // Check if block goes past buffer
         if (current + blockSize - buffer >= totalSize) {
+            if (DNSAnswer) {
+                printf("\n");
+            }
+
             // Output error statement
             printf("\t++ Invalid record: truncated name\n");
 
