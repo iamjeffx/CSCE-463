@@ -46,348 +46,97 @@ struct Parameters {
 
     unordered_set<string> hostsUniqueness;
     unordered_set<DWORD> IPUniqueness;
-    queue<string> URLQueue;
+    queue<char*> URLQueue;
 
     HANDLE URLQueueMutex;
     HANDLE IPListMutex;
     HANDLE hostListMutex;
     HANDLE paramMutex;
-
     HANDLE statQuit;
+
+    string filename;
 };
 
-bool isTAMUURL(URLParser& URL) {
-    if (URL.getHost().find("tamu.edu") != -1 && URL.getURL().find("tamu.edu/") != -1) {
-        return true;
-    }
-    return false;
-}
-
-void parsePageLinks(HTMLParserBase* HTMLParser, Parameters* p, string page, URLParser URL) {
+void parsePageLinks(HTMLParserBase* HTMLParser, Parameters* p, string page, string URL) {
     int numLinks;
     bool containsTAMULink = false;
-    char* linkBuf = HTMLParser->Parse((char*)page.c_str(), (int)strlen(page.c_str()), (char*)URL.getURL().c_str(), (int)strlen(URL.getURL().c_str()), &numLinks);
-
-    string link;
-
-    for (int i = 0; i < numLinks; i++) {
-        link = string(linkBuf);
-        URLParser tamuURL(link);
-
-        if (isTAMUURL(tamuURL)) {
-            containsTAMULink = true;
-            break;
-        }
-        linkBuf += strlen(linkBuf) + 1;
-    }
+    char* linkBuf = HTMLParser->Parse((char*)page.c_str(), (int)strlen(page.c_str()), (char*)URL.c_str(), (int)strlen(URL.c_str()), &numLinks);
 
     WaitForSingleObject(p->paramMutex, INFINITE);
-    if (containsTAMULink) {
-        if (isTAMUURL(URL)) {
-            p->numTAMUInternal++;
-        }
-        else {
-            p->numTAMUExternal++;
-        }
-    }
     p->numTotalLinks += numLinks;
     ReleaseMutex(p->paramMutex);
 }
 
 int parseStatus(string response) {
+    // Status is not present
     if (response.size() <= 14) {
         return -1;
     }
 
+    // Extract status and return
     int status = atoi(response.substr(9, 3).c_str());
-
-    if (status <= 99 || status > 505) {
-        return -1;
-    }
-
     return status;
 }
 
-bool parseLinksFile(string filename, queue<string>& links) {
-    ifstream file(filename, ios::binary | ios::in);
+UINT parseLinksFile(LPVOID params) {
+    Parameters* p = (Parameters*)params;
+
+    ifstream file(p->filename, ios::binary | ios::in);
     string line;
 
     if (!file.is_open()) {
-        return false;
+        return -1;
     }
-
-    while (getline(file, line)) {
-        if (!file.eof()) {
-            line = line.substr(0, line.size() - 1);
-        }
-        links.push(line);
-    }
-    return true;
-}
-
-void parseURL(string URL, unordered_set<string>& hosts, unordered_set<DWORD>& IPs) {
-    // Output URL
-    printf("URL: %s\n", URL.c_str());
-    URLParser parser(URL);
-
-    // Parse URL
-    printf("\tParsing URL... ");
-    int parseOutput = parser.parse();
-
-    // Invalid scheme detected
-    if (parseOutput == -1) {
-        printf("failed with invalid scheme");
-        return;
-    }
-    // Invalid port detected
-    else if (parseOutput == -2) {
-        printf("failed with invalid port");
-        return;
-    }
-    else {
-        // URL parsed successfully
-        printf("host %s, port %d\n", parser.getHost().c_str(), parser.getPort());
-
-        // Check host uniqueness
-        printf("\tChecking host uniqueness... ");
-        int prevSize = hosts.size();
-        hosts.insert(parser.getHost());
-
-        // Unique host
-        if (prevSize < hosts.size()) {
-            printf("passed\n");
-        }
-        // Duplicate
-        else {
-            printf("failed\n");
-            return;
-        }
-
-        // Perform DNS search
-        Socket s;
-        struct sockaddr_in tempServer;
-        if (!s.performDNS(parser.getHost())) {
-            return;
-        }
-        tempServer = s.getServer();
-
-        // Check IP uniqueness
-        printf("\tChecking IP uniqueness... ");
-        DWORD IP = s.getIP();
-        prevSize = IPs.size();
-        IPs.insert(IP);
-
-        // Unique IP
-        if (prevSize < IPs.size()) {
-            printf("passed\n");
-        }
-        // Duplicate
-        else {
-            printf("failed\n");
-            return;
-        }
-
-        // Connect to robots page and parse response
-        printf("\tConnecting on robots... ");
-        if (s.Connect(parser.getPort())) {
-            if (s.Send(parser.generateRobotsRequest())) {
-                if (s.Read(true)) {
-                    // Extract response
-                    string response = string(s.getBuf());
-                    s.close();
-                    WSACleanup();
-
-                    // Extract header
-                    size_t headerIndex = response.find("\r\n\r\n");
-                    string header = response.substr(0, headerIndex);
-
-                    // HTML header not present
-                    if (header.size() <= 0) {
-                        printf("\tHTML error: no header present\n");
-                        return;
-                    }
-
-                    // Extract status
-                    int status;
-                    if ((status = parseStatus(response)) == -1) {
-                        return;
-                    }
-                    printf("status code %d\n", status);
-
-                    // Verify header
-
-                    // Free to crawl
-                    if (status >= 400) {
-                        // Reconnect socket
-                        printf("\t\b\b* Connecting on page... ");
-                        s = Socket();
-                        s.setServer(tempServer);
-                        if (s.Connect(parser.getPort())) {
-                            if (s.Send(parser.generateRequest("GET"))) {
-                                if (s.Read(false)) {
-                                    // Extract response
-                                    response = string(s.getBuf());
-
-                                    // Clean up socket
-                                    s.close();
-                                    WSACleanup();
-
-                                    // Extract header
-                                    headerIndex = response.find("\r\n\r\n");
-                                    header = response.substr(0, headerIndex);
-
-                                    // Parse status code
-                                    if ((status = parseStatus(header)) == -1) {
-                                        return;
-                                    }
-                                    printf("status code %d\n", status);
-
-                                    if (status >= 200 && status < 300) {
-                                        // Parse page HTML
-                                        HTMLParserBase HTMLParser;
-                                        printf("\t\b\b+ Parsing page... ");
-                                        int numLinks;
-
-                                        clock_t timer = clock();
-                                        char* buffer = HTMLParser.Parse((char*)response.c_str(), (int)strlen(response.c_str()), (char*)parser.getURL().c_str(), (int)strlen(parser.getURL().c_str()), &numLinks);
-                                        double timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
-
-                                        printf("done in %.1f ms with %d links\n", timeElapsed * 1000, numLinks);
-                                    }
-                                    else {
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Not free to crawl
-                    else if (status < 400 && status >= 200) {
-                        return;
-                    }
-                }
+    try {
+        while (getline(file, line)) {
+            if (!file.eof()) {
+                line = line.substr(0, line.size() - 1);
             }
+            char* tempLine = new char[line.size() + 1];
+            memcpy(tempLine, line.c_str(), line.size());
+            tempLine[line.size()] = '\0';
+
+            WaitForSingleObject(p->URLQueueMutex, INFINITE);
+            p->URLQueue.push(tempLine);
+            ReleaseMutex(p->URLQueueMutex);
         }
+        return 0;
     }
+    catch (int errno) {
+        printf("Issue reading file\n");
+        return -1;
+    }
+
 }
 
-void requestHTTP(string URL) {
-    printf("URL: %s\n", URL.c_str());
-
-    // Begin parsing URL
-    printf("\tParsing URL... ");
-    URLParser parser(URL);
-    int parseResult = parser.parse();
-
-    // Not HTTP scheme
-    if (parseResult == -1) {
-        printf("failed with invalid scheme");
-        return;
-    }
-    // Invalid port 
-    if (parseResult == -2) {
-        printf("failed with invalid port");
-        return;
-    }
-    printf("host %s, port %d, request %s\n", parser.getHost().c_str(), parser.getPort(), parser.generateQuery().c_str());
-
-    // Initialize socket
-    Socket s;
-    if (!s.performDNS(parser.getHost())) {
-        return;
-    }
-    printf("\t\b\b* Connecting on page... ");
-    if (!s.Connect(parser.getPort())) {
-        return;
-    }
-
-    // Send request: If request gets properly sent, then read the response from the server if packets are properly received
-    if (s.Send(parser.generateRequest("GET"))) {
-        if (s.Read(false)) {
-            // Extract response and close the socket
-            string res = string(s.getBuf());
-            s.close();
-
-            // Extract the header from the response
-            size_t headerIndex = res.find("\r\n\r\n");
-            string header = res.substr(0, headerIndex);
-
-            // Extract status code
-            int statusCode = parseStatus(header);
-
-            printf("status code %d\n", statusCode);
-            // Only parse the HTML if a 2XX status code is present
-            if (!(statusCode < 200 || statusCode >= 300)) {
-                // Parse the HTML page
-                int numLinks;
-                HTMLParserBase HTMLParser;
-
-                printf("\t\b\b+ Parsing page... ");
-
-                clock_t timer = clock();
-                char* buffer = HTMLParser.Parse((char*)res.c_str(), (int)strlen(res.c_str()), (char*)parser.getURL().c_str(), (int)strlen(parser.getURL().c_str()), &numLinks);
-                double timeElapsed = ((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC;
-
-                printf("done in %.1f ms with %d links\n", timeElapsed * 1000, numLinks);
-            }
-
-            // Output HTTP response header
-            printf("----------------------------------------\n");
-            printf("%s\n", header.c_str());
-        }
-    }
-    // Clean up all socket information
-    WSACleanup();
-    return;
-}
-
-int DNSLookup(string host, sockaddr_in& server) {
-    hostent* remote;
-    DWORD IP = inet_addr(host.c_str());
-    if (IP == INADDR_NONE) {
-        if ((remote = gethostbyname(host.c_str())) == NULL) {
-            return -1;
-        }
-        else {
-            memcpy((char*)&(server.sin_addr), remote->h_addr_list, remote->h_length);
-            return 0;
-        }
-    }
-
-    server.sin_addr.S_un.S_addr = IP;
-    return 0;
-}
-
-UINT statThread(LPVOID params) {
+DWORD WINAPI statThread(LPVOID params) {
     Parameters* p = (Parameters*)params;
 
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-
     clock_t startTime = clock();
-    int numBytes = 0;
-    int numPages = 0;
+    int numBytes = p->numBytesDownloaded;
+    int numPages = p->numPagesDownloaded;
+    double bytesDownloaded;
+    double pagesDownloaded;
     bool last = false;
 
-    while (true) {
-        // Update pages and downloaded bytes for next interval
-        numBytes = p->numBytesDownloaded;
-        numPages = p->numPagesDownloaded;
+    clock_t prevTime = clock();
 
-        // Update every 2 seconds
-        Sleep(2000);
-
+    while (WaitForSingleObject(p->statQuit, 2000) == WAIT_TIMEOUT) {
         // Output stats for current interval
         printf("[%3d] %4d Q %6d E %7d H %6d D %6d I %5d R %5d C %5d L %4dK\n",
-            (int)floor(((double)clock() - (double)startTime) / (double)(CLOCKS_PER_SEC)),
+            (clock() - startTime) / CLOCKS_PER_SEC,
             p->numThreadsRunning, (int)p->URLQueue.size(), p->numExtractedURLs, p->numHostUniqueness,
             p->numDNSSuccess, p->numIPUniqueness, p->numRobotsSuccess, p->numCrawledURLs, p->numTotalLinks / 1000);
 
         // Compute number of bytes downloaded during this interval (2s)
-        double bytesDownloaded = ((double)p->numBytesDownloaded - (double)numBytes) / (double)2;
-        double pagesDownloaded = (double)((double)p->numPagesDownloaded - (double)numPages) / 2.0;
+        bytesDownloaded = ((double)p->numBytesDownloaded - (double)numBytes) / (double)(((double)clock() - (double)prevTime) / (double)CLOCKS_PER_SEC);
+        pagesDownloaded = (double)((double)p->numPagesDownloaded - (double)numPages) / (double)(((double)clock() - (double)prevTime) / (double)CLOCKS_PER_SEC);
 
         // Output crawling information
         printf("\t*** crawling %.1f pps @ %.1f Mbps\n", (double)pagesDownloaded, bytesDownloaded / double(125000));
+
+        numBytes = p->numBytesDownloaded;
+        numPages = p->numPagesDownloaded;
 
         // Break condition
         if (p->numThreadsRunning == 0) {
@@ -405,24 +154,28 @@ UINT statThread(LPVOID params) {
 
     // Output final stats
     printf("\nExtracted %d URLs @ %d/s\n", p->numExtractedURLs, (int)(p->numExtractedURLs / totalTimeElapsed));
-    printf("Looked up %d DNS names @ %d/s\n", p->numDNSSuccess, (int)(p->numDNSSuccess / totalTimeElapsed));
-    printf("Downloaded %d robots @ %d/s\n", p->numRobotsSuccess, (int)(p->numRobotsSuccess / totalTimeElapsed));
+    printf("Looked up %d DNS names @ %d/s\n", p->numHostUniqueness, (int)(p->numDNSSuccess / totalTimeElapsed));
+    printf("Attempted %d robots @ %d/s\n", p->numIPUniqueness, (int)(p->numRobotsSuccess / totalTimeElapsed));
     printf("Crawled %d pages @ %d/s (%.2f MB)\n", p->numCrawledURLs, (int)(p->numCrawledURLs / totalTimeElapsed), (double)(p->numBytesDownloaded / (double)1048576));
     printf("Parsed %d links @ %d/s\n", p->numTotalLinks, (int)(p->numTotalLinks / totalTimeElapsed));
     printf("HTTP codes: 2xx = %d, 3xx = %d, 4xx = %d, 5xx = %d, other = %d\n", p->num2XX, p->num3XX, p->num4XX, p->num5XX, p->numXXX);
+    //printf("Number of TAMU links from TAMU sites = %d and from non-TAMU sites = %d\n", p->numTAMUInternal, p->numTAMUExternal);
 
     return 0;
 }
 
-UINT crawlThread(LPVOID param) {
+DWORD WINAPI crawlThread(LPVOID param) {
     // Set up parameters
     Parameters* p = (Parameters*)param;
     bool hostUnique, IPUnique;
 
     HTMLParserBase* HTMLParser = new HTMLParserBase;
 
-    // Set up socket
-    Socket s;
+    int prevSize;
+    struct sockaddr_in tempServer;
+    string response;
+    int statusCode;
+    int parseResult;
 
     // Local variables
     string URLCurrent;
@@ -447,10 +200,11 @@ UINT crawlThread(LPVOID param) {
 
         // Pop of the front of the queue
         try {
-            URLCurrent = p->URLQueue.front();
+            URLCurrent = string(p->URLQueue.front());
+            delete p->URLQueue.front();
             p->URLQueue.pop();
         }
-        catch(int errno) {
+        catch (int errno) {
             // Dequeue URL failed -> continue to next cycle
             ReleaseMutex(p->URLQueueMutex);
             continue;
@@ -464,52 +218,58 @@ UINT crawlThread(LPVOID param) {
         ReleaseMutex(p->paramMutex);
 
         // Parse URL
-        URLParser parser(URLCurrent);
-        int parseResult = parser.parse();
+        URLParser* parser = new URLParser(URLCurrent);
+        parseResult = parser->parse();
 
         if (parseResult != 0) {
+            delete parser;
             continue;
         }
 
         // Reinitialize socket at each iteration
-        s.ReInitSock();
+        Socket* s;
+        s = new Socket();
+        s->ReInitSock();
 
         // Check host uniqueness
         WaitForSingleObject(p->hostListMutex, INFINITE);
-        int prevSize = (int)p->hostsUniqueness.size();
-        p->hostsUniqueness.insert(parser.getHost());
+        prevSize = (int)p->hostsUniqueness.size();
+        p->hostsUniqueness.insert(parser->getHost());
 
         if (prevSize != p->hostsUniqueness.size()) {
             hostUnique = true;
         }
         ReleaseMutex(p->hostListMutex);
-        
+
         if (hostUnique) {
             WaitForSingleObject(p->paramMutex, INFINITE);
             p->numHostUniqueness++;
             ReleaseMutex(p->paramMutex);
         }
         else {
+            s->close();
+            delete s;
+            delete parser;
             continue;
         }
 
         // Perform DNS lookup
-        struct sockaddr_in tempServer;
-        if (!s.performDNS(parser.getHost())) {
+        if (!s->performDNS(parser->getHost())) {
+            s->close();
+            delete s;
+            delete parser;
             continue;
         }
-        tempServer = s.getServer();
+        tempServer = s->getServer();
 
         WaitForSingleObject(p->paramMutex, INFINITE);
         p->numDNSSuccess++;
         ReleaseMutex(p->paramMutex);
 
         // Check IP Uniqueness
-        DWORD IP = inet_addr(inet_ntoa(tempServer.sin_addr));
-
         WaitForSingleObject(p->IPListMutex, INFINITE);
         prevSize = (int)p->IPUniqueness.size();
-        p->IPUniqueness.insert(IP);
+        p->IPUniqueness.insert(inet_addr(inet_ntoa(tempServer.sin_addr)));
 
         if (prevSize != p->IPUniqueness.size()) {
             IPUnique = true;
@@ -522,15 +282,18 @@ UINT crawlThread(LPVOID param) {
             ReleaseMutex(p->paramMutex);
         }
         else {
+            s->close();
+            delete s;
+            delete parser;
             continue;
         }
 
         // Connect and send robots request
-        if (s.Connect(parser.getPort())) {
-            if (s.Send(parser.generateRobotsRequest())) {
-                if (s.Read(true)) {
+        if (s->Connect(parser->getPort())) {
+            if (s->Send(parser->generateRobotsRequest())) {
+                if (s->Read(true)) {
                     // Extract HTTP response
-                    string response = s.getBuf();
+                    response = s->getBuf();
 
                     WaitForSingleObject(p->paramMutex, INFINITE);
                     p->numBytesDownloaded += strlen(response.c_str());
@@ -538,41 +301,22 @@ UINT crawlThread(LPVOID param) {
                     ReleaseMutex(p->paramMutex);
 
                     // Close socket
-                    closesocket(s.sock);
-
-                    int headerIndex = (int)response.find("\r\n\r\n");
-                    string header = response.substr(0, headerIndex);
+                    s->close();
+                    delete s;
 
                     // Extract robots status code
-                    int robotsStatus = parseStatus(header);
+                    statusCode = parseStatus(response);
 
-                    if (robotsStatus == -1) {
+                    if (statusCode == -1) {
+                        delete parser;
                         continue;
                     }
 
-                    // Update status numbers
-                    WaitForSingleObject(p->paramMutex, INFINITE);
-                    if (robotsStatus >= 200 && robotsStatus < 300) {
-                        p->num2XX++;
-                    }
-                    else if (robotsStatus >= 300 && robotsStatus < 400) {
-                        p->num3XX++;
-                    }
-                    else if (robotsStatus >= 400 && robotsStatus < 500) {
-                        p->num4XX++;
-                    }
-                    else if (robotsStatus >= 500 && robotsStatus < 600) {
-                        p->num5XX++;
-                    }
-                    else {
-                        p->numXXX++;
-                    }
-                    ReleaseMutex(p->paramMutex);
-
                     // Free to crawl page
-                    if (robotsStatus >= 400 && robotsStatus < 500) {
-                        s.ReInitSock();
-                        s.setServer(tempServer);
+                    if (statusCode >= 400 && statusCode < 500) {
+                        Socket* s2 = new Socket();
+                        s2->ReInitSock();
+                        s2->setServer(tempServer);
 
                         // Update number of robots success
                         WaitForSingleObject(p->paramMutex, INFINITE);
@@ -580,23 +324,18 @@ UINT crawlThread(LPVOID param) {
                         ReleaseMutex(p->paramMutex);
 
                         // Connect to actual page
-                        if (s.Connect(parser.getPort())) {
-                            if (s.Send(parser.generateRequest("GET"))) {
-                                if (s.Read(false)) {
+                        if (s2->Connect(parser->getPort())) {
+                            if (s2->Send(parser->generateRequest("GET"))) {
+                                if (s2->Read(false)) {
                                     // Extract HTTP response
-                                    response = s.getBuf();
-                                    
+                                    response = s2->getBuf();
+
                                     WaitForSingleObject(p->paramMutex, INFINITE);
                                     p->numBytesDownloaded += strlen(response.c_str());
                                     p->numPagesDownloaded++;
                                     ReleaseMutex(p->paramMutex);
 
-                                    closesocket(s.getSock());
-
-                                    headerIndex = response.find("\r\n\r\n");
-                                    header = response.substr(0, headerIndex);
-
-                                    int statusCode = parseStatus(header);
+                                    statusCode = parseStatus(response.substr(0, response.find("\r\n\r\n")));
 
                                     if (statusCode >= 200 && statusCode < 300) {
                                         WaitForSingleObject(p->paramMutex, INFINITE);
@@ -605,7 +344,7 @@ UINT crawlThread(LPVOID param) {
                                         ReleaseMutex(p->paramMutex);
 
                                         // Parse page
-                                        parsePageLinks(HTMLParser, p, response, parser);
+                                        parsePageLinks(HTMLParser, p, response, parser->getURL());
                                     }
                                     else if (statusCode >= 300 && statusCode < 400) {
                                         WaitForSingleObject(p->paramMutex, INFINITE);
@@ -627,18 +366,113 @@ UINT crawlThread(LPVOID param) {
                                         p->numXXX++;
                                         ReleaseMutex(p->paramMutex);
                                     }
+                                    delete parser;
+                                    s2->close();
+                                    delete s2;
                                 }
                             }
                         }
                     }
                 }
             }
+        } 
+    }
+
+    delete HTMLParser;
+
+    return 0;
+}
+
+int hexToDec(char hexVal[]) {
+    // Note that this function was taken from geeksforgeeks
+    // Link: https://www.geeksforgeeks.org/program-for-hexadecimal-to-decimal/
+
+    int len = strlen(hexVal);
+
+    // Initializing base value to 1, i.e 16^0 
+    int base = 1;
+
+    int dec_val = 0;
+
+    // Extracting characters as digits from last character 
+    for (int i = len - 1; i >= 0; i--) {
+        // if character lies in '0'-'9', converting  
+        // it to integral 0-9 by subtracting 48 from 
+        // ASCII value. 
+        if (hexVal[i] >= '0' && hexVal[i] <= '9') {
+            dec_val += (hexVal[i] - 48) * base;
+
+            // incrementing base by power 
+            base = base * 16;
+        }
+
+        // If character lies in 'A'-'F' , converting  
+        // It to integral 10 - 15 by subtracting 55 from ASCII value 
+        else if (hexVal[i] >= 'A' && hexVal[i] <= 'F') {
+            dec_val += (hexVal[i] - 55) * base;
+
+            // incrementing base by power 
+            base = base * 16;
         }
     }
 
-    s.close();
+    return dec_val;
+}
 
-    return 0;
+int parseChunks(string body) {
+    char* prevBody = new char[strlen(body.c_str()) + 1];
+    memcpy(prevBody, body.c_str(), strlen(body.c_str()));
+    prevBody[strlen(body.c_str())] = '\0';
+
+    char* test = prevBody;
+
+    int total = 0;
+
+    while (true) {
+        // Extract hex value
+        char* temp = strstr(prevBody, "\r\n");
+        int length = (int)(temp - prevBody);
+        char* lenBuffer = new char[length + 1];
+        memcpy(lenBuffer, prevBody, length);
+        lenBuffer[length] = '\0';
+
+        // Convert hex value to decimal
+        int len = hexToDec(lenBuffer);
+
+        if (len == 0) {
+            delete lenBuffer;
+            break;
+        }
+
+        if (test + strlen(test) <= prevBody + len) {
+            delete lenBuffer;
+            return -1;
+        }
+
+        total += len;
+        prevBody = temp + 2;
+        prevBody += (len + 2);
+
+        delete lenBuffer;
+    }
+
+    //int total = 0;
+
+    /*while (true) {
+        string l = body.substr(0, body.find("\r\n"));
+        int lConverted = hexToDec((char*)l.c_str());
+
+        if (lConverted == 0) {
+            break;
+        }
+
+        total += lConverted;
+
+        body = body.substr(body.find("\r\n") + 2, -1);
+        body = body.substr(lConverted + (int)2, -1);
+    }*/
+
+    return total;
 }
 
 int main(int argc, char** argv) {
@@ -647,11 +481,127 @@ int main(int argc, char** argv) {
 
     // Extract command line information (2 arguments => P1 code executes, 3 arguments => P2 code executes if threads specified are 1)
     if (argc == 2) {
-        // Extract URL
-        string URL = string(argv[1]);
+        clock_t timer;
 
-        // Request HTML from host
-        requestHTTP(URL);
+        // Bonus section: HTTP/1.1 chunking
+        string URL = argv[1];
+        printf("URL: %s\n", URL.c_str());
+
+        // Parse the URL
+        printf("\tParsing URL... ");
+        URLParser URLParser(URL);
+        int parseResult = URLParser.parse();
+
+        // Not HTTP scheme
+        if (parseResult == -1) {
+            printf("failed with invalid scheme");
+            return 0;
+        }
+        // Invalid port 
+        if (parseResult == -2) {
+            printf("failed with invalid port");
+            return 0;
+        }
+        printf("host %s, port %d, request %s\n", URLParser.getHost().c_str(), URLParser.getPort(), URLParser.generateQuery().c_str());
+
+        // Perform DNS lookup
+        Socket s;
+        s.ReInitSock();
+        printf("\tDoing DNS... ");
+
+        timer = clock();
+        if (!s.performDNS(URLParser.getHost())) {
+            s.close();
+            printf("failed with %d\n", WSAGetLastError());
+            return 0;
+        }
+
+        printf("done in %.1f ms, found %s\n", ((double)clock() - (double)timer) * 1000 / (double)CLOCKS_PER_SEC, inet_ntoa(s.getServer().sin_addr));
+
+        printf("\t\b\b* Connecting on page... ");
+        timer = clock();
+
+        // Connect to page
+        if (s.Connect(URLParser.getPort())) {
+            printf("done in %.1f ms\n", (double)(((double)clock() - (double)timer) * 1000) / (double)CLOCKS_PER_SEC);
+
+            // Send HTTP/1.1 message
+            if (s.Send(URLParser.bonusGenerateRequest("GET"))) {
+                printf("\tLoading... ");
+
+                timer = clock();
+
+                // Read the response
+                if (s.Read(false)) {
+                    // Extract response
+                    string response = s.getBuf();
+                    string header = response.substr(0, response.find("\r\n\r\n"));
+                    string body = response.substr(response.find("\r\n\r\n") + 4, response.size() - (response.find("\r\n\r\n") + 4));
+                    s.close();
+
+                    printf("done in %.1f ms with %d bytes\n", (double)(((double)clock() - (double)timer) * 1000) / (double)CLOCKS_PER_SEC, (int)response.size());
+
+                    // Verifying header
+                    printf("\tVerifying header... ");
+
+                    int statusCode = parseStatus(response);
+
+                    if (statusCode == -1) {
+                        printf("failed with non-HTTP header");
+                        return 0;
+                    }
+
+                    printf("status code %d\n", statusCode);
+
+                    string headerFind = header;
+                    std::transform(headerFind.begin(), headerFind.end(), headerFind.begin(), ::tolower);
+
+                    if (headerFind.find("transfer-encoding: chunked") != -1) {
+                        // Perform dechunking
+                        printf("\tDechunking... body size was %d, ", (int)body.size());
+
+                        int newSize = parseChunks(body);
+                        if (newSize == -1) {
+                            printf("failed\n");
+                            return 0;
+                        }
+
+                        printf("now %d\n", newSize);
+                    }
+
+                    // Parse the page
+                    printf("\t\b\b+ Parsing page... ");
+                    timer = clock();
+
+                    HTMLParserBase* HTMLParser = new HTMLParserBase;
+
+                    int links;
+                    char* buffer = HTMLParser->Parse((char*)response.c_str(), (int)strlen(response.c_str()), (char*)URL.c_str(), (int)strlen(URL.c_str()), &links);
+
+                    printf("done in %.1f ms with %d links\n\n", (double)(((double)clock() - (double)timer) * 1000) / (double)CLOCKS_PER_SEC, links);
+                    delete HTMLParser;
+
+                    printf("----------------------------------------\n");
+                    printf("%s\n", header.c_str());
+                }
+                else {
+                    printf("failed with %d\n", WSAGetLastError());
+                    s.close();
+                    return 0;
+                }
+            }
+            else {
+                printf("failed with %d\n", WSAGetLastError());
+                s.close();
+                return 0;
+            }
+        }
+        else {
+            printf("failed with %d\n", WSAGetLastError());
+            s.close();
+            return 0;
+        }
+
         return 0;
     }
     else if (argc == 3) {
@@ -676,12 +626,6 @@ int main(int argc, char** argv) {
     }
     printf("Opened %s with size %d\n", filename.c_str(), sb.st_size);
 
-    // Parse file and extract links to crawl and parse and store in shared queue
-    if (!parseLinksFile(filename, params.URLQueue)) {
-        printf("Could not open file: File either corrupted or does not exist\n");
-        return 0;
-    }
-
     // Initialize uninitialized values of params
     params.numThreadsRunning = 0;
     params.queueSize = (int)params.URLQueue.size();
@@ -690,7 +634,11 @@ int main(int argc, char** argv) {
     params.IPListMutex = CreateMutex(NULL, 0, NULL);
     params.paramMutex = CreateMutex(NULL, 0, NULL);
     params.statQuit = CreateEvent(NULL, true, false, NULL);
-    
+    params.filename = filename;
+
+    // Parse file and extract links to crawl and parse and store in shared queue
+    HANDLE fileLinks = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)parseLinksFile, &params, 0, NULL);
+
     HANDLE* crawlers = new HANDLE[numThreads];
 
     HANDLE stats = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)statThread, &params, 0, NULL);
@@ -703,6 +651,8 @@ int main(int argc, char** argv) {
         ReleaseMutex(params.paramMutex);
     }
 
+    WaitForSingleObject(fileLinks, INFINITE);
+
     for (int i = 0; i < numThreads; i++) {
         WaitForSingleObject(crawlers[i], INFINITE);
         CloseHandle(crawlers[i]);
@@ -711,6 +661,8 @@ int main(int argc, char** argv) {
     SetEvent(params.statQuit);
     WaitForSingleObject(stats, INFINITE);
     CloseHandle(stats);
+
+    delete crawlers;
 
     WSACleanup();
 }
