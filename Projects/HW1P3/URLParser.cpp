@@ -104,6 +104,23 @@ string URLParser::generateRequest(string requestType) {
 	return request;
 }
 
+string URLParser::bonusGenerateRobotsRequest() {
+	string request = "HEAD /robots.txt HTTP/1.1\r\n";
+	request += "User-agent: JXCrawler/1.2\r\n";
+	request += "Host: " + getHost() + "\r\n";
+	request += "Connection: close\r\n\r\n";
+	return request;
+}
+
+string URLParser::bonusGenerateRequest(string requestType) {
+	// Generates entire HTTP request
+	string request = requestType + " " + generateQuery() + " HTTP/1.1\r\n";
+	request += "User-agent: JXCrawler/1.2\r\n";
+	request += "Host: " + getHost() + "\r\n";
+	request += "Connection: close\r\n\r\n";
+	return request;
+}
+
 string URLParser::generateRobotsRequest() {
 	string request = "HEAD /robots.txt HTTP/1.0\r\n";
 	request += "User-agent: JXCrawler/1.2\r\n";

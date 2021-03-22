@@ -130,11 +130,14 @@ bool Socket::Read(bool robots) {
     clock_t timer = clock();
 
     while (true) {
-        timeout.tv_sec -= floor(((double)clock() - (double)timer) / (double)CLOCKS_PER_SEC);
+        timeout.tv_sec -= (clock() - timer) / CLOCKS_PER_SEC;
 
         // Set file descriptors
         FD_ZERO(&fdRead);
         FD_SET(sock, &fdRead);
+
+        // Reset timer (for correct amount to subtract from timeout)
+        timer = clock();
 
         if ((ret = select(1, &fdRead, 0, 0, &timeout)) > 0) {
             // Receive new data
@@ -168,6 +171,8 @@ bool Socket::Read(bool robots) {
                 delete buf;
                 buf = temp;
             }
+
+
         }
         // Timeout expired for connection
         else if (ret == 0) {

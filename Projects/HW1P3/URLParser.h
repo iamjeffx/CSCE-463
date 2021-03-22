@@ -24,6 +24,7 @@ private:
 
 public:
 	URLParser(std::string url);
+	URLParser() {};
 	~URLParser();
 
 	void reset(string URL);
@@ -31,6 +32,8 @@ public:
 	string generateQuery();
 	string generateRequest(string requestType);
 	string generateRobotsRequest();
+	string bonusGenerateRobotsRequest();
+	string bonusGenerateRequest(string requestType);
 	string getHost() {
 		return this->host;
 	}
