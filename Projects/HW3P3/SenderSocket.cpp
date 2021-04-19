@@ -90,6 +90,17 @@ DWORD WINAPI SenderSocket::Stats(LPVOID self) {
 DWORD WINAPI SenderSocket::Worker(LPVOID self) {
 	SenderSocket* s = (SenderSocket*)self;
 
+	int kernelBuffer = 20e6;
+	if (setsockopt(s->sock, SOL_SOCKET, SO_RCVBUF, (const char*)&kernelBuffer, sizeof(int)) == SOCKET_ERROR) {
+		return 0;
+	}
+	kernelBuffer = 20e6;
+	if (setsockopt(s->sock, SOL_SOCKET, SO_SNDBUF, (const char*)&kernelBuffer, sizeof(int)) == SOCKET_ERROR) {
+		return 0;
+	}
+
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
 	HANDLE events[] = { s->receive, s->full, s->quit };
 
 	bool complete = false;
