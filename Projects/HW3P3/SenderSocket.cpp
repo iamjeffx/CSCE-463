@@ -1,5 +1,7 @@
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 
+#define DEBUG false
+
 #include "SenderSocket.h"
 
 using namespace std;
@@ -58,9 +60,9 @@ SenderSocket::~SenderSocket() {
 DWORD WINAPI SenderSocket::Stats(LPVOID self) {
 	SenderSocket* s = (SenderSocket*)self;
 
-	clock_t start = clock();
+	s->start = clock();
 	clock_t current;
-	clock_t prev = start;
+	clock_t prev = s->start;
 
 	int prevSize = s->base;
 	int nextSize;
@@ -69,16 +71,17 @@ DWORD WINAPI SenderSocket::Stats(LPVOID self) {
 		current = clock();
 		nextSize = s->base;
 
-		printf("[%3d] B %6d (%3.1f) N %6d T %d F %d W %d S %.3f Mbps RTT %.3f\n", 
-			(current - start) / CLOCKS_PER_SEC,
-			s->base,
-			max(s->base - 1, 0) * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) / (double)1e6,
-			s->nextSeq,
-			s->numTO,
-			s->numRtx,
-			s->windowSize,
-			(double)(nextSize - prevSize) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) / (1e6 * ((double)(current - prev) / CLOCKS_PER_SEC)), 
-			s->estRTT);
+		if(!DEBUG)
+			printf("[%3d] B %6d (%3.1f) N %6d T %d F %d W %d S %.3f Mbps RTT %.3f\n", 
+				(current - s->start) / CLOCKS_PER_SEC,
+				s->base,
+				max(s->base - 1, 0) * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) / (double)1e6,
+				s->nextSeq,
+				s->numTO,
+				s->numRtx,
+				s->windowSize,
+				(double)(nextSize - prevSize) * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) / (1e6 * ((double)(current - prev) / CLOCKS_PER_SEC)), 
+				s->estRTT);
 
 		prevSize = nextSize;
 		prev = current;
@@ -105,33 +108,45 @@ DWORD WINAPI SenderSocket::Worker(LPVOID self) {
 
 	bool complete = false;
 
-	int dup = 0;
-	int rtx = 0;
+	int* dup = new int(0);
+	int* rtx = new int(0);
+
+	s->transferStart = clock();
+
+	clock_t timerExpire;
+	int recvOutput = 0;
 
 	while (!complete || (complete && s->base < s->nextSend)) {
 		if (s->nextSend > s->base) {
-			s->timeout = 1000 * (s->packets[s->base % s->windowSize].txTime - clock()) / (CLOCKS_PER_SEC) + (long)(1000 * s->RTO);
+			s->timeout = (long)(1000 * (timerExpire - clock()) / (double)CLOCKS_PER_SEC);
 		}
 		else {
 			s->timeout = INFINITE;
 		}
 
+		recvOutput = 0;
+
 		int ret = WaitForMultipleObjects(3, events, false, s->timeout);
+
 		switch (ret) {
 		case WAIT_OBJECT_0 + 0:
-			s->ReceiveACK(&dup, &rtx);
+			recvOutput = s->ReceiveACK(dup, rtx);
 			break;
 
 		case WAIT_OBJECT_0 + 1:
-			if (sendto(s->sock, (char*)&(s->packets[s->base % s->windowSize].sdh),
-				s->packets[s->base % s->windowSize].size,
+			if (sendto(s->sock, (char*)&(s->packets[s->nextSend % s->windowSize].sdh),
+				s->packets[s->nextSend % s->windowSize].size,
 				0,
 				(struct sockaddr*)&(s->server),
 				sizeof(s->server)) == SOCKET_ERROR) {
 				break;
 			}
 
-			s->packets[s->base % s->windowSize].txTime = clock();
+			s->packets[s->nextSend % s->windowSize].txTime = clock();
+			if (DEBUG)
+				printf("[%.2f] --> Packet %d sent txTime %d\n", (clock() - s->start) / (double)CLOCKS_PER_SEC, 
+					s->nextSend, 
+					clock());
 			s->nextSend++;
 			break;
 		
@@ -147,35 +162,58 @@ DWORD WINAPI SenderSocket::Worker(LPVOID self) {
 						sizeof(s->server)) == SOCKET_ERROR) {
 				break;
 			}
+			if(DEBUG)
+				printf("[%.2f] --> Packet %d rtx on TO txTime %d\n", (clock() - s->start) / (double)CLOCKS_PER_SEC, s->base, clock());
+
+			if (*rtx == 50) {
+				break;
+			}
 
 			s->packets[s->base % s->windowSize].txTime = clock();
-			rtx++;
+			(*rtx)++;
 			s->numTO++;
 			break;
 
 		default:
 			break;
 		}
+
+		if (s->nextSend == s->base + 1 || recvOutput == 1 || ret == WAIT_TIMEOUT) {
+			timerExpire = clock() + s->RTO * CLOCKS_PER_SEC;
+		}
 	}
+
+	s->transferEnd = clock();
+
+	delete dup;
+	delete rtx;
 
 	return STATUS_OK;
 }
 
-void SenderSocket::ReceiveACK(int* dup, int* rtx) {
+int SenderSocket::ReceiveACK(int* dup, int* rtx) {
 	ReceiverHeader rh;
 
 	struct sockaddr_in res;
 	int size = sizeof(res);
 
 	if (recvfrom(this->sock, (char*)&rh, sizeof(ReceiverHeader), 0, (struct sockaddr*)&(res), &size) == SOCKET_ERROR) {
-		return;
+		return -1;
 	}
 
 	int y = rh.ackSeq;
+	double actRTT = (clock() - packets[(y - 1) % windowSize].txTime) / (double)CLOCKS_PER_SEC;
+
+	if(DEBUG)
+		printf("[%.2f] <-- ACK %d RTT %.3f txTime for packet %d: %d rcvTime %d\n", (clock() - start) / (double)CLOCKS_PER_SEC, 
+			y,
+			actRTT,
+			y - 1,
+			packets[(y - 1) % windowSize].txTime,
+			clock());
+
 	if (y > base) {
 		if (*rtx == 0) {
-			double actRTT = (clock() - packets[(y - 1) % windowSize].txTime) / (double)CLOCKS_PER_SEC;
-
 			if (estRTT == -1) {
 				estRTT = actRTT;
 				RTO = estRTT + 4 * 0.01;
@@ -196,31 +234,40 @@ void SenderSocket::ReceiveACK(int* dup, int* rtx) {
 		*dup = 0;
 		*rtx = 0;
 
-		if (base != nextSend) {
-			packets[base % windowSize].txTime = clock();
-		}
-
 		effectiveWindow = min(this->windowSize, rh.recvWnd);
 		int newReleased = base + effectiveWindow - lastReleased;
 		lastReleased += newReleased;
 
 		ReleaseSemaphore(empty, newReleased, NULL);
+
+		return 1;
 	}
 	else if (y == base) {
 		(*dup)++;
-		if (*dup == 3) {
+		if ((*dup) == 3) {
+			if (*rtx == 50) {
+				return -1;
+			}
+
 			if (sendto(sock, (char*)&(packets[base % windowSize].sdh),
 				packets[base % windowSize].size,
 				0,
 				(struct sockaddr*)&(server),
 				sizeof(server)) == SOCKET_ERROR) {
-				return;
+				return -1;
 			}
 
+			if(DEBUG)
+				printf("[%.2f] --> Packet %d rtx on FRTX\n", (clock() - start) / (double)CLOCKS_PER_SEC, nextSend);
+
+			(*dup) = 0;
 			(*rtx)++;
 			numRtx++;
 			packets[base % windowSize].txTime = clock();
+
+			return 1;
 		}
+		return 0;
 	}
 }
 
@@ -255,7 +302,7 @@ DWORD SenderSocket::Open(string host, int port, int senderWindow, LinkProperties
 	server.sin_port = htons(port);
 
 	SenderSynHeader* packet = new SenderSynHeader();
-	packet->lp.bufferSize = senderWindow + 3;
+	packet->lp.bufferSize = senderWindow + 50;
 	packet->lp.pLoss[0] = lp->pLoss[0];
 	packet->lp.pLoss[1] = lp->pLoss[1];
 	packet->lp.RTT = lp->RTT;
@@ -277,10 +324,9 @@ DWORD SenderSocket::Open(string host, int port, int senderWindow, LinkProperties
 	long RTO_usec = TO.tv_usec;
 
 	int available;
+	clock_t start = clock();
 
-	for (int i = 0; i < 3; i++) {
-		clock_t start = clock();
-
+	for (int i = 0; i < 50; i++) {
 		if (sendto(sock, (char*)packet, sizeof(SenderSynHeader), 0, (struct sockaddr*)&server, sizeof(server)) == SOCKET_ERROR) {
 			delete packet;
 			printf("failed sendto with %d\n", WSAGetLastError());
@@ -288,6 +334,9 @@ DWORD SenderSocket::Open(string host, int port, int senderWindow, LinkProperties
 			WSACleanup();
 			return FAILED_SEND;
 		}
+
+		if(DEBUG)
+			printf("[%.2f] --> SYN sent\n", (clock() - start) / (double)CLOCKS_PER_SEC);
 
 		fd_set fdRead;
 		FD_ZERO(&fdRead);
@@ -313,6 +362,10 @@ DWORD SenderSocket::Open(string host, int port, int senderWindow, LinkProperties
 					estRTT = (double)(clock() - start) / (double)CLOCKS_PER_SEC;
 					this->RTO = estRTT + 4 * 0.01;
 				}
+
+				if (DEBUG)
+					printf("[%.2f] <-- SYN-ACK 0 RTT %.3f\n", (clock() - start) / (double)CLOCKS_PER_SEC, estRTT);
+
 				open = true;
 
 				lastReleased = min(this->windowSize, rh.recvWnd);
@@ -388,7 +441,7 @@ DWORD SenderSocket::Close(double timeElapsed) {
 	packet->flags.reserved = 0;
 	packet->flags.SYN = 0;
 
-	for (int i = 0; i < 5; i++) {
+	for (int i = 0; i < 50; i++) {
 		if (sendto(sock, (char*)packet, sizeof(SenderDataHeader), 0, (struct sockaddr*)&server, sizeof(server)) == SOCKET_ERROR) {
 			delete packet;
 			printf("failed sendto with %d\n", WSAGetLastError());
@@ -426,7 +479,7 @@ DWORD SenderSocket::Close(double timeElapsed) {
 				closesocket(sock);
 				delete packet;
 
-				printf("[%.2f] <-- FIN-ACK %d window %X\n", timeElapsed, rh.ackSeq, rh.recvWnd);
+				printf("[%.2f] <-- FIN-ACK %d window %X\n", (clock() - transferStart) / (double)CLOCKS_PER_SEC, rh.ackSeq, rh.recvWnd);
 				return STATUS_OK;
 			}
 		}

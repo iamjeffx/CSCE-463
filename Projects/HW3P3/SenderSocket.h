@@ -98,6 +98,11 @@ public:
     HANDLE receive;
     HANDLE complete;
 
+    clock_t transferStart;
+    clock_t transferEnd;
+
+    clock_t start;
+
     double estRTT = -1;
     double devRTT = -1;
 
@@ -124,7 +129,7 @@ public:
     DWORD Open(string host, int port, int senderWindow, LinkProperties* lp);
     DWORD Close(double timeElapsed);
     DWORD Send(char* ptr, int bytes);
-    void ReceiveACK(int* dup, int* rtx);
+    int ReceiveACK(int* dup, int* rtx);
 
     static DWORD WINAPI Worker(LPVOID self);
     static DWORD WINAPI Stats(LPVOID self);

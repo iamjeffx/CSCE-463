@@ -12,7 +12,7 @@ struct Parameters {
 public:
     SenderSocket* ss;
     char* charBuf;
-    int byteBufferSize;
+    UINT64 byteBufferSize;
 };
 
 DWORD WINAPI SendThread(LPVOID params) {
@@ -30,6 +30,8 @@ DWORD WINAPI SendThread(LPVOID params) {
 
         off += bytes;
     }
+
+    return 0;
 }
 
 int main(int argc, char** argv) {
@@ -105,7 +107,10 @@ int main(int argc, char** argv) {
         printf("Main:\tclose failed with status %d\n", status);
         return 0;
     }
-    DWORD check = cs.CRC32((unsigned char*)charBuf, byteBufferSize);
-    printf("Main:\ttransfer finished in %.3f sec, %.2f Kbps, checksum %X\n", timeElapsed, (double)dwordBufSize * 32 / (double)(1000 * timeElapsed), check);
-    printf("Main:\testRTT %.3f, ideal rate %.2f Kbps\n", ss->estRTT, 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) / (ss->estRTT * 1000));
+	DWORD check = cs.CRC32((unsigned char*)charBuf, byteBufferSize);
+    printf("Main:\ttransfer finished in %.3f sec, %.2f Kbps, checksum %X\n", 
+        (ss->transferEnd - ss->transferStart) / (double)CLOCKS_PER_SEC, 
+        (double)dwordBufSize * 32 / (double)(1000 * ((ss->transferEnd - ss->transferStart) / (double)CLOCKS_PER_SEC)), 
+        check);
+    printf("Main:\testRTT %.3f, ideal rate %.2f Kbps\n", ss->estRTT, ss->windowSize * 8 * (MAX_PKT_SIZE - sizeof(SenderDataHeader)) / (ss->estRTT * 1000));
 }
